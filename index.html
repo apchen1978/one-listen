@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>One Listen</title>
+<style>
+  :root {
+    --room: #17120e;
+    --room-2: #221a14;
+    --warm: #e8b45a;
+    --warm-2: #ffd9a0;
+    --bone: #efe6d8;
+    --dim: #9c8f7e;
+    --dimmer: #6d6355;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; background: radial-gradient(120% 90% at 50% 40%, var(--room-2), var(--room) 70%);
+    color: var(--bone); font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    line-height: 1.6; -webkit-font-smoothing: antialiased; overflow-x: hidden;
+  }
+  .wrap {
+    min-height: 100dvh; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    padding: 40px 22px; text-align: center; position: relative;
+  }
+  canvas { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; opacity: 0; transition: opacity 1.2s ease; }
+  canvas.on { opacity: 1; }
+  canvas.fading { opacity: 0; transition: opacity 3.2s ease; }
+
+  .inner { position: relative; z-index: 2; max-width: 560px; }
+  .kicker { font-size: 10.5px; font-weight: 700; letter-spacing: .3em; text-transform: uppercase; color: var(--dimmer); margin: 0 0 22px; }
+  h1 {
+    font-family: ui-serif, Georgia, "Times New Roman", serif;
+    font-size: clamp(38px, 9vw, 68px); line-height: 1; letter-spacing: -0.025em;
+    margin: 0 0 20px; font-weight: 700; color: var(--bone);
+  }
+  .lede { font-family: ui-serif, Georgia, serif; font-size: clamp(17px, 3.4vw, 21px); color: var(--warm-2); margin: 0 0 10px; }
+  .sub { font-size: 14px; color: var(--dim); margin: 0 auto; max-width: 30em; }
+
+  .btn {
+    font: inherit; font-size: 15px; font-weight: 600; cursor: pointer; margin-top: 34px;
+    background: transparent; color: var(--warm-2);
+    border: 1px solid rgba(232,180,90,.45); border-radius: 999px; padding: 14px 30px;
+    letter-spacing: .04em; transition: background .3s ease, border-color .3s ease, transform .3s ease;
+  }
+  .btn:hover { background: rgba(232,180,90,.1); border-color: rgba(232,180,90,.8); }
+  .btn:focus-visible { outline: 2px solid var(--warm); outline-offset: 3px; }
+  .btn:active { transform: scale(.985); }
+
+  .playing { margin-top: 34px; font-size: 12px; letter-spacing: .22em; text-transform: uppercase; color: var(--dimmer); }
+
+  .after { opacity: 0; transition: opacity 2.6s ease; }
+  .after.on { opacity: 1; }
+  .after .big { font-family: ui-serif, Georgia, serif; font-size: clamp(24px, 5vw, 34px); font-weight: 700; margin: 0 0 14px; color: var(--bone); }
+  .after .small { font-size: 14.5px; color: var(--warm-2); margin: 0 0 8px; }
+  .after .tiny { font-size: 13px; color: var(--dim); margin: 0; }
+  .gone { font-size: 13px; color: var(--dimmer); margin-top: 28px; }
+  .note { position: fixed; bottom: 16px; left: 0; right: 0; text-align: center; font-size: 10.5px; color: #4e463c; padding: 0 20px; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<div class="wrap">
+  <div class="inner" id="inner">
+    <p class="kicker">one listen</p>
+    <h1>One Listen</h1>
+    <p class="lede">A song that plays once.</p>
+    <p class="sub">This one was made for you just now. Press play and it will play. When it ends, it will not play again.</p>
+    <button class="btn" id="play">Play it once</button>
+  </div>
+</div>
+
+<p class="note">Synthetic invention · the piece is generated, not recorded · your one listen is kept in this browser only</p>
+
+<script>
+  /* ------------------------------------------------------------------
+     One Listen — a song that exists exactly once.
+     The piece is generated deterministically from a per-visitor seed,
+     played through Web Audio, and then locked. Nothing here is a record
+     of anything real; it is an invention, not evidence.
+  ------------------------------------------------------------------ */
+
+  const DUR = 28;            // seconds
+  const KEY_STORE = "oneListen.v1";
+  const $ = id => document.getElementById(id);
+
+  // ---- state -------------------------------------------------------
+  let state;
+  try { state = JSON.parse(localStorage.getItem(KEY_STORE) || "null"); } catch (e) { state = null; }
+  if (!state || typeof state.seed !== "number") {
+    state = { seed: (Math.random() * 1e9) | 0, used: false };
+    try { localStorage.setItem(KEY_STORE, JSON.stringify(state)); } catch (e) {}
+  }
+  const save = () => { try { localStorage.setItem(KEY_STORE, JSON.stringify(state)); } catch (e) {} };
+
+  // ---- tiny seeded PRNG -------------------------------------------
+  function rng(seed) {
+    let a = seed >>> 0;
+    return () => {
+      a |= 0; a = (a + 0x6D2B79F5) | 0;
+      let t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  // ---- the music (curated material, seeded variation) --------------
+  const SEMI = n => Math.pow(2, n / 12);
+  const ROOT = 220; // A3
+
+  // Am – F – C – G, as semitone offsets from A3
+  const CHORDS = [[0, 3, 7], [-4, 0, 3], [-9, -5, -2], [-2, 2, 5]];
+  const BASS   = [-12, -16, -21, -14];
+
+  // two hand-written melodic contours over the 4 chords
+  const MELODIES = [
+    [[1.8,7,1.2],[3.8,5,1.0],[5.4,3,1.4],[8.8,0,1.2],[10.6,3,1.0],[12.2,5,1.6],[15.8,7,1.3],[17.8,10,1.0],[19.4,7,1.4],[22.8,5,1.2],[24.4,7,1.0],[25.8,12,2.2]],
+    [[1.6,3,1.3],[3.6,5,1.0],[5.2,7,1.5],[8.6,3,1.2],[10.4,5,1.0],[12.0,3,1.5],[15.6,7,1.3],[17.6,5,1.0],[19.2,3,1.5],[22.6,5,1.2],[24.2,3,1.0],[25.6,7,2.2]]
+  ];
+
+  function compose(seed) {
+    const r = rng(seed);
+    const transpose = [-2, -1, 0, 1, 2][(r() * 5) | 0];
+    const melody = MELODIES[(r() * MELODIES.length) | 0];
+    return { transpose, melody };
+  }
+  const PIECE = compose(state.seed);
+
+  // ---- audio -------------------------------------------------------
+  let ctx = null, master = null, reverb = null;
+
+  function makeImpulse(seconds, decay) {
+    const rate = ctx.sampleRate, len = Math.floor(rate * seconds);
+    const buf = ctx.createBuffer(2, len, rate);
+    for (let ch = 0; ch < 2; ch++) {
+      const d = buf.getChannelData(ch);
+      for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, decay);
+    }
+    return buf;
+  }
+
+  function buildAudio() {
+    ctx = new (window.AudioContext || window.webkitAudioContext)();
+    master = ctx.createGain();
+    master.gain.value = 0.0001;
+
+    const lp = ctx.createBiquadFilter();
+    lp.type = "lowpass"; lp.frequency.value = 2600;
+
+    reverb = ctx.createConvolver();
+    reverb.buffer = makeImpulse(3.2, 2.6);
+    const wet = ctx.createGain(); wet.gain.value = 0.42;
+
+    master.connect(lp); lp.connect(ctx.destination);
+    master.connect(reverb); reverb.connect(wet); wet.connect(ctx.destination);
+  }
+
+  function voice(freq, at, dur, type, peak, cutoff) {
+    const o = ctx.createOscillator();
+    o.type = type; o.frequency.value = freq;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0, at);
+    g.gain.linearRampToValueAtTime(peak, at + Math.min(0.9, dur * 0.22));
+    g.gain.exponentialRampToValueAtTime(0.0001, at + dur);
+    let node = o;
+    if (cutoff) {
+      const f = ctx.createBiquadFilter();
+      f.type = "lowpass"; f.frequency.value = cutoff;
+      o.connect(f); node = f;
+    }
+    node.connect(g); g.connect(master);
+    o.start(at); o.stop(at + dur + 0.05);
+  }
+
+  function schedule() {
+    const t0 = ctx.currentTime + 0.25;
+    const tr = PIECE.transpose;
+    const CH = DUR / CHORDS.length;
+
+    CHORDS.forEach((chord, i) => {
+      const at = t0 + i * CH;
+      // pad
+      chord.forEach((semi, j) => {
+        voice(ROOT * SEMI(semi + tr) * (j === 0 ? 1 : 1), at, CH + 2.6, "sine", 0.055, 1800);
+        voice(ROOT * SEMI(semi + tr) * 1.003, at, CH + 2.6, "sine", 0.035, 1800);
+      });
+      // bass
+      voice(ROOT * SEMI(BASS[i] + tr) * 0.5, at, CH + 1.4, "sine", 0.10, 700);
+    });
+
+    PIECE.melody.forEach(([t, semi, dur]) => {
+      voice(ROOT * SEMI(semi + tr) * 2, t0 + t, dur + 1.1, "triangle", 0.115, 3200);
+    });
+
+    master.gain.setValueAtTime(0.0001, t0);
+    master.gain.exponentialRampToValueAtTime(0.85, t0 + 1.4);
+    master.gain.setValueAtTime(0.85, t0 + DUR - 3.0);
+    master.gain.exponentialRampToValueAtTime(0.0001, t0 + DUR + 1.2);
+  }
+
+  // ---- the thread (the song, becoming and disappearing) ------------
+  const cv = $("c"), cx = cv.getContext("2d");
+  let W = 0, H = 0, dpr = 1;
+
+  function resize() {
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    W = cv.clientWidth; H = cv.clientHeight;
+    cv.width = Math.floor(W * dpr); cv.height = Math.floor(H * dpr);
+    cx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+  window.addEventListener("resize", resize);
+  resize();
+
+  function drawThread(progress) {
+    cx.clearRect(0, 0, W, H);
+    const mid = H * 0.5;
+    const pad = 26;
+    const span = W - pad * 2;
+    const head = pad + progress * span;
+    const tailLen = span * 0.26;
+
+    cx.lineCap = "round";
+    cx.lineWidth = 2;
+
+    const steps = 90;
+    let prev = null;
+    for (let s = 0; s <= steps; s++) {
+      const k = s / steps;
+      const x = head - tailLen * k;
+      if (x < pad - tailLen) { prev = null; continue; }
+      // gentle wave, alive but restrained
+      const amp = 14 * Math.sin(progress * Math.PI) * (0.35 + 0.65 * Math.sin(k * Math.PI));
+      const y = mid + Math.sin((x / span) * Math.PI * 6 + progress * 9) * amp;
+      const fade = Math.pow(1 - k, 1.7);
+      if (prev) {
+        cx.strokeStyle = "rgba(232,180,90," + (0.85 * fade).toFixed(3) + ")";
+        cx.beginPath(); cx.moveTo(prev.x, prev.y); cx.lineTo(x, y); cx.stroke();
+      }
+      prev = { x, y };
+    }
+
+    // the head: a small warm light
+    const glow = cx.createRadialGradient(head, mid, 0, head, mid, 46);
+    glow.addColorStop(0, "rgba(255,217,160,.95)");
+    glow.addColorStop(.35, "rgba(232,180,90,.35)");
+    glow.addColorStop(1, "rgba(232,180,90,0)");
+    cx.fillStyle = glow;
+    cx.beginPath(); cx.arc(head, mid, 46, 0, Math.PI * 2); cx.fill();
+  }
+
+  // ---- the experience ---------------------------------------------
+  const inner = $("inner");
+
+  function locked() {
+    inner.innerHTML =
+      '<p class="kicker">one listen</p>' +
+      '<h1>One Listen</h1>' +
+      '<p class="lede">You already used your listen.</p>' +
+      '<p class="sub">It played once. It is not coming back — that is the whole of it, not a rule we could relax.</p>' +
+      '<p class="gone">You can give someone else one of their own.</p>';
+  }
+
+  function play() {
+    if (state.used) { locked(); return; }
+    state.used = true; save();
+
+    buildAudio();
+    if (ctx.state === "suspended") ctx.resume();
+    schedule();
+
+    inner.innerHTML = '<p class="kicker">one listen</p><p class="playing">playing — once</p>';
+    cv.classList.add("on");
+
+    const startMs = performance.now();
+    if (ctx.state === "suspended") ctx.resume();
+    const t0ms = startMs + 250; // matches the audio start offset
+
+    (function frame() {
+      const elapsed = (performance.now() - t0ms) / 1000;
+      const p = Math.max(0, Math.min(1, elapsed / DUR));
+      drawThread(p);
+      if (p < 1) requestAnimationFrame(frame);
+      else finish();
+    })();
+  }
+
+  function finish() {
+    drawThread(1);
+    cv.classList.remove("on");
+    cv.classList.add("fading");
+
+    const card = document.createElement("div");
+    card.className = "after";
+    card.innerHTML =
+      '<p class="big">That was the only time.</p>' +
+      '<p class="small">Nobody else will hear this one.</p>' +
+      '<p class="tiny">You can give someone one listen of their own.</p>';
+    inner.innerHTML = '<p class="kicker">one listen</p>';
+    inner.appendChild(card);
+
+    requestAnimationFrame(() => requestAnimationFrame(() => card.classList.add("on")));
+    setTimeout(() => { cx.clearRect(0, 0, W, H); cv.classList.remove("fading"); }, 3600);
+  }
+
+  $("play").addEventListener("click", play);
+  if (state.used) locked();
+</script>
+</body>
+</html>
