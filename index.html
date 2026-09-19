@@ -61,7 +61,7 @@
 </style>
 </head>
 <body>
-<canvas id="c"></canvas>
+<canvas id="c" aria-hidden="true"></canvas>
 
 <div class="wrap">
   <div class="inner" id="inner">
@@ -203,6 +203,7 @@
 
   // ---- the thread (the song, becoming and disappearing) ------------
   const cv = $("c"), cx = cv.getContext("2d");
+  const REDUCE = !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
   let W = 0, H = 0, dpr = 1;
 
   function resize() {
@@ -232,7 +233,7 @@
       const x = head - tailLen * k;
       if (x < pad - tailLen) { prev = null; continue; }
       // gentle wave, alive but restrained
-      const amp = 14 * Math.sin(progress * Math.PI) * (0.35 + 0.65 * Math.sin(k * Math.PI));
+      const amp = REDUCE ? 0 : 14 * Math.sin(progress * Math.PI) * (0.35 + 0.65 * Math.sin(k * Math.PI));
       const y = mid + Math.sin((x / span) * Math.PI * 6 + progress * 9) * amp;
       const fade = Math.pow(1 - k, 1.7);
       if (prev) {
@@ -265,18 +266,26 @@
 
   function play() {
     if (state.used) { locked(); return; }
-    state.used = true; save();
 
-    buildAudio();
-    if (ctx.state === "suspended") ctx.resume();
-    schedule();
+    // Guard: never spend the listen if the browser cannot actually play it.
+    try {
+      buildAudio();
+      if (ctx.state === "suspended") ctx.resume();
+      schedule();
+    } catch (err) {
+      inner.innerHTML =
+        '<p class="kicker">one listen</p>' +
+        '<p class="lede">This browser cannot play it.</p>' +
+        '<p class="sub">Your listen was not spent. Try another browser or device.</p>';
+      return;
+    }
+
+    state.used = true; save();
 
     inner.innerHTML = '<p class="kicker">one listen</p><p class="playing">playing — once</p>';
     cv.classList.add("on");
 
-    const startMs = performance.now();
-    if (ctx.state === "suspended") ctx.resume();
-    const t0ms = startMs + 250; // matches the audio start offset
+    const t0ms = performance.now() + 250; // matches the audio start offset
 
     (function frame() {
       const elapsed = (performance.now() - t0ms) / 1000;
