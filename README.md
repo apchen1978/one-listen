@@ -21,4 +21,4 @@ The one-listen constraint is browser-local. Clearing site data resets it. It is 
 
 ## Boundary
 
-Synthetic experiment. No real composition, artist, or recording is involved. No claim is made about attention, memory, willingness to pay, or demand. It tests a possibility, not a behaviour.
+Demo experiment. No real composition, artist, or recording is involved. No claim is made about attention, memory, willingness to pay, or demand. It tests a possibility, not a behaviour.
